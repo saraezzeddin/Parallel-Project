@@ -1,0 +1,91 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include "mpi.h"
+#include "pgmio.h"
+
+double start_time_sobel, end_time_sobel;
+
+#define W 256
+#define H 256
+#define THRESH 100
+
+int main(int argc, char **argv)
+{
+	int rank, size;
+	MPI_Status status;
+
+	MPI_Init(&argc, &argv);
+
+	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+	int S = size;
+	int WS = W / S;
+	int HS = H;
+
+	float image[WS + 2][HS + 2];
+	float mbuffer[W][H];
+	float buffer[WS][HS];
+
+	char *filename;
+
+	if (rank == 0)
+	{
+    	char inputimage[] = "image256x256.pgm";
+    	filename = inputimage;
+    	pgmread(filename, mbuffer, W, H);
+
+    	printf("Width: %d \nHeight: %d\nProcessors: %d\n", W, H, S);
+	}
+
+	start_time_sobel = MPI_Wtime();
+	MPI_Scatter(mbuffer, WS * HS, MPI_FLOAT, buffer, WS * HS, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+	for (int i = 1; i < WS + 1; i++)
+	{
+    	for (int j = 1; j < HS + 1; j++)
+    	{
+        	float gradienth = ((-1.0 * buffer[i - 1][j - 1]) + (1.0 * buffer[i + 1][j - 1]) + (-2.0 * buffer[i - 1][j]) + (2.0 * buffer[i + 1][j]) + (-1.0 * buffer[i - 1][j + 1]) + (1.0 * buffer[i + 1][j + 1]));
+        	float gradientv = ((-1.0 * buffer[i - 1][j - 1]) + (-2.0 * buffer[i][j - 1]) + (-1.0 * buffer[i + 1][j - 1]) + (1.0 * buffer[i - 1][j + 1]) + (2.0 * buffer[i][j + 1]) + (1.0 * buffer[i + 1][j + 1]));
+
+        	float gradient = sqrt((gradienth * gradienth) + (gradientv * gradientv));
+
+        	if (gradient < THRESH) {
+            	gradient = 0;
+        	}
+        	else {
+            	gradient = 255;
+        	}
+        	image[i][j] = gradient;
+    	}
+	}
+	end_time_sobel = MPI_Wtime();
+
+	for (int i = 1; i < WS + 1; i++)
+	{
+    	for (int j = 1; j < HS + 1; j++)
+    	{
+        	buffer[i - 1][j - 1] = image[i][j];
+    	}
+	}
+
+	MPI_Gather(buffer, WS * HS, MPI_FLOAT, mbuffer, WS * HS, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+	if (rank == 0)
+{
+char outputimage[] = "image-output256x256.pgm";
+filename = outputimage;
+	printf("\nOutput: <%s>\n", filename);
+	pgmwrite(filename, mbuffer, W, H);
+
+	end_time_sobel = MPI_Wtime();
+	double total = end_time_sobel - start_time_sobel;
+	printf("Total Parallel Time: %fs\n", total);
+}
+
+MPI_Finalize();
+
+return 0;
+}
+
